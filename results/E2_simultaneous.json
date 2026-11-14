@@ -1,0 +1,36 @@
+{
+ "m": 2000,
+ "delta": 0.1,
+ "reps": 1500,
+ "nboot": 400,
+ "levels_finite": [
+  0.8,
+  0.85,
+  0.9,
+  0.95
+ ],
+ "interval": [
+  0.8,
+  0.95
+ ],
+ "joint_failure": {
+  "finite": {
+   "none": 0.7406666666666667,
+   "pointwise": 0.22333333333333333,
+   "bonferroni": 0.06133333333333333,
+   "joint_boot": 0.11
+  },
+  "interval": {
+   "none": 0.8173333333333334,
+   "pointwise": 0.31466666666666665,
+   "joint_boot": 0.10733333333333334
+  }
+ },
+ "mean_inflation": {
+  "pointwise": 0.014882078434801625,
+  "bonferroni": 0.022760174878266568,
+  "joint_boot_fin": 0.020824466784971345,
+  "pointwise_int": 0.015118051226832512,
+  "joint_boot_int": 0.023813488487917932
+ }
+}

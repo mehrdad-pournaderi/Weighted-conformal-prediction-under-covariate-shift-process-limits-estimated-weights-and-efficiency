@@ -1,0 +1,90 @@
+{
+ "m": 2000,
+ "reps": 3000,
+ "nboot": 400,
+ "delta": 0.1,
+ "levels": [
+  0.8,
+  0.85,
+  0.9,
+  0.95
+ ],
+ "sigma2": [
+  0.7363647448408638,
+  0.6632665105115715,
+  0.5452151604706249,
+  0.35926499167422105
+ ],
+ "gamma": [
+  -0.15838961613717356,
+  -0.13541001780759876,
+  -0.10470118770191295,
+  -0.06340153573805221
+ ],
+ "cases": {
+  "indep_Nt=m": {
+   "Nt": 2000,
+   "Ns": 2000,
+   "tau2_pred_single": 0.7865392858410262,
+   "sigma2_single": 0.7363647448408638,
+   "limit_failure_naive_single": 0.10748733573352354,
+   "emp_var_single": 0.7811379683866139,
+   "mean_boot_var_naive": 0.7241658836860199,
+   "mean_boot_var_feas": 0.773424075236695,
+   "failure": {
+    "naive_single": 0.13733333333333334,
+    "feas_single": 0.12833333333333333,
+    "naive_joint": 0.14,
+    "feas_joint": 0.13866666666666666
+   }
+  },
+  "cal_Nt=4m": {
+   "Nt": 8000,
+   "Ns": null,
+   "tau2_pred_single": 0.7175492919658029,
+   "sigma2_single": 0.7363647448408638,
+   "limit_failure_naive_single": 0.09710155374177509,
+   "emp_var_single": 0.6701783833459053,
+   "mean_boot_var_naive": 0.721672129957928,
+   "mean_boot_var_feas": 0.6997076992126156,
+   "failure": {
+    "naive_single": 0.111,
+    "feas_single": 0.11366666666666667,
+    "naive_joint": 0.115,
+    "feas_joint": 0.12733333333333333
+   }
+  },
+  "cal_Nt=m/4": {
+   "Nt": 500,
+   "Ns": null,
+   "tau2_pred_single": 0.8116265563411074,
+   "sigma2_single": 0.7363647448408638,
+   "limit_failure_naive_single": 0.1111022037729732,
+   "emp_var_single": 0.7881416614648866,
+   "mean_boot_var_naive": 0.7250435039998299,
+   "mean_boot_var_feas": 0.8010458177385394,
+   "failure": {
+    "naive_single": 0.124,
+    "feas_single": 0.11366666666666667,
+    "naive_joint": 0.135,
+    "feas_joint": 0.12966666666666668
+   }
+  },
+  "cal_Nt=m/16": {
+   "Nt": 125,
+   "Ns": null,
+   "tau2_pred_single": 1.1126738023420817,
+   "sigma2_single": 0.7363647448408638,
+   "limit_failure_naive_single": 0.14857740219266613,
+   "emp_var_single": 1.1172757218493266,
+   "mean_boot_var_naive": 0.7486534868293746,
+   "mean_boot_var_feas": 1.126343588439491,
+   "failure": {
+    "naive_single": 0.16933333333333334,
+    "feas_single": 0.12866666666666668,
+    "naive_joint": 0.16966666666666666,
+    "feas_joint": 0.135
+   }
+  }
+ }
+}

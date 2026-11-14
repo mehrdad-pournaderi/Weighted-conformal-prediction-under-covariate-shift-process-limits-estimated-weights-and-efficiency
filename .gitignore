@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+
+# Plots written by E1, E4 and E5; regenerate them by running the code.
+figures/
