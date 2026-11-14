@@ -87,7 +87,7 @@ def wquantile(S, w, beta):
     Conventions of the paper: the value is +inf when no finite t reaches the level, that is, for a level above one
     (in particular an inflated level beta + c/sqrt(m) > 1, or c = +inf) and, with F_hat = 0, when all weights vanish."""
     beta = np.atleast_1d(np.asarray(beta, float))
-    o = np.argsort(S); Ss = S[o]; cw = np.cumsum(w[o])
+    o = np.argsort(S); Ss = S[o]; cw = np.cumsum(np.asarray(w, dtype=float)[o])   # float accumulation: integer weights are valid
     if not cw[-1] > 0: return np.full(beta.shape, np.inf)
     cw /= cw[-1]
     k = np.searchsorted(cw, beta, side="left")
