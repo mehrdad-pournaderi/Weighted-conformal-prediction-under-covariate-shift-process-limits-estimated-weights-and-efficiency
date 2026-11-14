@@ -2,7 +2,8 @@
 Numerical illustrations for
   "Weighted conformal prediction under covariate shift: process limits, estimated weights and efficiency".
 
-Run:  python3 experiments.py            (writes ../results/*.json and ../figures/*.pdf)
+Run:  python3 experiments.py              every run behind the stored files (writes ../results/*.json, ../figures/*.pdf)
+      python3 experiments.py E7 E7m8000   a subset; the runs are E1 ... E10, E7b and E7m8000 (see the end of the file)
 
 Model (all experiments).  Y = 2X + eps, eps | X ~ N(0, (0.2+|X|)^2); fixed predictor mu(x)=2x,
 score S = |Y - mu(X)| = |eps|, so F_{S|X=x}(t) = 2 Phi(t/(0.2+|x|)) - 1.
@@ -12,6 +13,11 @@ Shifts (likelihood ratio v = dQ_X/dP_X):
   C  heavy tail:  P_X = U(0,1), v(x) = c x^{-1/p}, p=1.5,    P(v>t) = c^p t^{-p}: infinite chi-square
   D  bounded, parametric: P_X = Beta(3,1), Q_X = Beta(4,1), v(x) = 4x/3, B = 4/3, K^2 = 16/15, noise scale
      2 - 1.8x instead of 0.2 + |x| (experiment E10: estimated weights, main text)
+Coverage.  F_Q and G are tabulated by numerical quadrature on a grid of thresholds and interpolated linearly, so the
+coverage F_Q(tau) of a threshold is computed numerically, without test-sample Monte Carlo error.
+Boundary conventions (as in the paper).  A weighted quantile at a level above one, or with all weights zero, is +inf
+(the prediction set is the whole space); the rank-corrected bootstrap critical value is +inf when its rank exceeds
+the number of draws.
 """
 import json, os, time, math
 import numpy as np
@@ -77,10 +83,20 @@ class Shift:
         X = self.sampP(m); S = np.abs(rng.normal(0, 1, m) * self.sd(X)); return X, S, self.v(X)
 
 def wquantile(S, w, beta):
-    """self-normalized weighted beta-quantile(s) of S; beta may be an array."""
-    o = np.argsort(S); Ss = S[o]; cw = np.cumsum(w[o]); cw /= cw[-1]
-    k = np.searchsorted(cw, np.atleast_1d(beta), side="left")
+    """self-normalized weighted beta-quantile(s) of S, inf{t: F_hat(t) >= beta}; beta may be an array.
+    Conventions of the paper: the value is +inf when no finite t reaches the level, that is, for a level above one
+    (in particular an inflated level beta + c/sqrt(m) > 1, or c = +inf) and, with F_hat = 0, when all weights vanish."""
+    beta = np.atleast_1d(np.asarray(beta, float))
+    o = np.argsort(S); Ss = S[o]; cw = np.cumsum(w[o])
+    if not cw[-1] > 0: return np.full(beta.shape, np.inf)
+    cw /= cw[-1]
+    k = np.searchsorted(cw, beta, side="left")
     return np.where(k < len(Ss), Ss[np.minimum(k, len(Ss) - 1)], np.inf)
+
+def rank_quantile(draws, delta):
+    """critical value of Procedure 1: the k-th smallest of the R draws, k = ceil((1-delta)(R+1)); +inf if k > R."""
+    R = len(draws); k = int(np.ceil((1 - delta) * (R + 1)))
+    return float(np.sort(draws)[k - 1]) if k <= R else np.inf
 
 def save(name, obj):
     with open(os.path.join(RES, name), "w") as f: json.dump(obj, f, indent=1)
@@ -156,8 +172,7 @@ def E2(m=2000, delta=0.1, reps=1500, nboot=400):
             Zb = (xi @ H) / (np.sqrt(m) * vbar)                                    # nboot x L
             chat = np.quantile(Zb.max(1), 1 - delta)
             def fail(infl):   # any level under-covers?  P_e(tau(beta+infl)) > 1-beta  <=>  F_Q(tau(beta+infl)) < beta
-                lev = np.minimum(levels + infl, 1 - 1e-12)
-                t2 = wquantile(S, v, lev)
+                t2 = wquantile(S, v, levels + infl)                                # +inf where the level exceeds one
                 return bool(np.any(sh.FQ(t2) < levels))
             rec[name]["none"].append(fail(0.0))
             rec[name]["pointwise"].append(fail(z1 * sig / np.sqrt(m)))
@@ -387,16 +402,20 @@ def E6(m=2000, reps=20000, betas=(0.8, 0.9), kinds=("A", "B")):
 # ----------------------------------------------------------------------------------------------
 # E7.  Feasible (pairs) bootstrap with estimated weights vs the naive bootstrap with the weights held fixed
 # ----------------------------------------------------------------------------------------------
-def E7(m=2000, reps=3000, nboot=400, delta=0.1, levels=(0.8, 0.85, 0.9, 0.95), out_name="E7_estboot.json", seed=8):
+E7_CASES = ("indep_Nt=m", "cal_Nt=4m", "cal_Nt=m/4", "cal_Nt=m/16")
+def E7(m=2000, reps=3000, nboot=400, delta=0.1, levels=(0.8, 0.85, 0.9, 0.95), out_name="E7_estboot.json", seed=8, cases=E7_CASES):
     global rng; rng = np.random.default_rng(seed)
     sh = Shift("B"); theta = sh.theta; b = np.array(levels); j0 = 0          # single level = levels[0] = 0.8
     q = np.array([sh.qQ(x) for x in b]); Gt = np.interp(q, sh.tgrid, sh.G_tab)
     sigma2 = (1 - b)**2 * Gt + b**2 * (sh.K2 - Gt)
     gam = np.array([integrate.quad(lambda x: sh.densQ(x) * (x - theta) * (2 * stats.norm.cdf(qq / sd_eps(x)) - 1), -8, 12, limit=200)[0] for qq in q])
-    cases = {"indep_Nt=m": ("indep", 1.0, 1.0), "cal_Nt=4m": ("cal", 0.25, None), "cal_Nt=m/4": ("cal", 4.0, None),
-             "cal_Nt=m/16": ("cal", 16.0, None)}   # the fourth case was added later; the random stream of the first three is unchanged
+    allcases = {"indep_Nt=m": ("indep", 1.0, 1.0), "cal_Nt=4m": ("cal", 0.25, None), "cal_Nt=m/4": ("cal", 4.0, None),
+                "cal_Nt=m/16": ("cal", 16.0, None)}
+    # The configurations share one random stream and run in the order given, so a configuration reproduces a stored
+    # result only if the same configurations precede it (E7_estboot_m8000.json was produced with the first three).
     out = {"m": m, "reps": reps, "nboot": nboot, "delta": delta, "levels": levels, "sigma2": sigma2.tolist(), "gamma": gam.tolist(), "cases": {}}
-    for name, (src, lam_t, lam_s) in cases.items():
+    for name in cases:
+        src, lam_t, lam_s = allcases[name]
         Nt = int(round(m / lam_t)); Ns = int(round(m / lam_s)) if lam_s else None
         tau2 = sigma2 + gam**2 * ((lam_t + lam_s) if src == "indep" else (lam_t - 1.0))
         rec = {k: np.zeros(reps, bool) for k in ["naive_single", "feas_single", "naive_joint", "feas_joint"]}
@@ -421,7 +440,7 @@ def E7(m=2000, reps=3000, nboot=400, delta=0.1, levels=(0.8, 0.85, 0.9, 0.95), o
             Lam = np.sqrt(m) * (Fb - Fc[None, :])
             cf1 = np.quantile(Lam[:, j0], 1 - delta); cfJ = np.quantile(Lam.max(1), 1 - delta); sd_feas[r] = Lam[:, j0].std()
             def fail(infl, single):
-                lev = np.minimum(b + infl, 1 - 1e-12) if not single else np.array([min(b[j0] + infl, 1 - 1e-12)])
+                lev = b + infl if not single else np.array([b[j0] + infl])       # +inf threshold where the level exceeds one
                 t2 = wquantile(S, vh, lev); target = b if not single else b[[j0]]
                 return bool(np.any(sh.FQ(t2) < target))
             rec["naive_single"][r] = fail(cn1 / np.sqrt(m), True); rec["feas_single"][r] = fail(cf1 / np.sqrt(m), True)
@@ -441,7 +460,7 @@ def E7(m=2000, reps=3000, nboot=400, delta=0.1, levels=(0.8, 0.85, 0.9, 0.95), o
 #      (naive multiplier with fixed weights, pairs), using np.quantile and the rank-corrected order statistic.
 #      By quantile duality the failure event is {sqrt(m)(F_check(q-) - beta) >= c}; Zq records that statistic.
 # ----------------------------------------------------------------------------------------------
-def E7b(m=2000, reps=2000, nboots=(400, 4000), delta=0.1, beta=0.8, cases=("indep_Nt=m", "cal_Nt=m/16"), seed=82,
+def E7b(m=2000, reps=1500, nboots=(400, 4000), delta=0.1, beta=0.8, cases=("indep_Nt=m", "cal_Nt=m/16"), seed=82,
         out_name="E7b_decomposition.json"):
     global rng; rng = np.random.default_rng(seed)
     sh = Shift("B"); theta = sh.theta; q = sh.qQ(beta); Gt = float(np.interp(q, sh.tgrid, sh.G_tab))
@@ -464,10 +483,9 @@ def E7b(m=2000, reps=2000, nboots=(400, 4000), delta=0.1, beta=0.8, cases=("inde
             Zc[r] = np.sqrt(m) * (beta - sh.FQ(tau)); Zq[r] = np.sqrt(m) * ((vh * (S < q)).sum() / vh.sum() - beta)
             ind = (S <= tau).astype(float); H = vh * (ind - Fc)
             def fail(c):
-                lev = min(beta + c / np.sqrt(m), 1 - 1e-12); return bool(sh.FQ(wquantile(S, vh, lev)[0]) < beta)
+                lev = beta + c / np.sqrt(m); return bool(sh.FQ(wquantile(S, vh, lev)[0]) < beta)   # +inf threshold if lev > 1
             cvals["fixed_tau"][r] = z1 * np.sqrt(tau2); cvals["fixed_sigma"][r] = z1 * np.sqrt(sigma2)
             for R in nboots:
-                k_rank = int(np.ceil((1 - delta) * (R + 1)))                       # rank-corrected order statistic
                 xi = rng.normal(0, 1, (R, m)); Zn = (xi @ H) / (np.sqrt(m) * vh.mean())
                 idx = rng.integers(0, m, (R, m)); Xb = X[idx]; Sb = S[idx]
                 Xtb = Xt[rng.integers(0, Nt, (R, Nt))].mean(1)
@@ -475,14 +493,15 @@ def E7b(m=2000, reps=2000, nboots=(400, 4000), delta=0.1, beta=0.8, cases=("inde
                 vb = np.exp((Xtb - Xsb)[:, None] * Xb); Lam = np.sqrt(m) * ((vb * (Sb <= tau)).sum(1) / vb.sum(1) - Fc)
                 for kind, draws in (("naive", Zn), ("pairs", Lam)):
                     cvals[f"{kind}_R{R}"][r] = np.quantile(draws, 1 - delta)
-                    cvals[f"{kind}_R{R}_rank"][r] = np.sort(draws)[min(k_rank, R) - 1]
+                    cvals[f"{kind}_R{R}_rank"][r] = rank_quantile(draws, delta)
             for k in keys: fails[k][r] = fail(cvals[k][r])
-        rec = {"Nt": Nt, "Ns": Ns, "tau2_pred": float(tau2), "emp_var_Zc": float(Zc.var(ddof=1)), "emp_var_Zq": float(Zq.var(ddof=1)),
-               "limit_failure_naive": float(1 - stats.norm.cdf(z1 * np.sqrt(sigma2 / tau2))),
-               "failure": {k: float(f.mean()) for k, f in fails.items()},
-               "mean_critical_value": {k: float(c.mean()) for k, c in cvals.items()},
-               "sd_critical_value": {k: float(c.std(ddof=1)) for k, c in cvals.items()},
-               "corr_critical_value_Zq": {k: float(np.corrcoef(c, Zq)[0, 1]) for k, c in cvals.items() if c.std() > 0}}
+        with np.errstate(invalid="ignore"):   # an infinite critical value (rank above R) has mean +inf and no sd or correlation
+            rec = {"Nt": Nt, "Ns": Ns, "tau2_pred": float(tau2), "emp_var_Zc": float(Zc.var(ddof=1)), "emp_var_Zq": float(Zq.var(ddof=1)),
+                   "limit_failure_naive": float(1 - stats.norm.cdf(z1 * np.sqrt(sigma2 / tau2))),
+                   "failure": {k: float(f.mean()) for k, f in fails.items()},
+                   "mean_critical_value": {k: float(c.mean()) for k, c in cvals.items()},
+                   "sd_critical_value": {k: float(c.std(ddof=1)) for k, c in cvals.items()},
+                   "corr_critical_value_Zq": {k: float(np.corrcoef(c, Zq)[0, 1]) for k, c in cvals.items() if c.std() > 0}}
         out["cases"][name] = rec
     save(out_name, out); return out
 
@@ -541,7 +560,7 @@ def E9(ntr=500, m=1000, reps=5000, reps_boot=2000, nboot=400, delta=0.1, levels=
     FQ = lambda t: integrate.quad(lambda x: sh.densQ(x) * (Phi((t - a(x)) / sd_eps(x)) - Phi((-t - a(x)) / sd_eps(x))), 0, 1, limit=200)[0]
     G = lambda t: integrate.quad(lambda x: sh.densQ(x) * sh.v(x) * (Phi((t - a(x)) / sd_eps(x)) - Phi((-t - a(x)) / sd_eps(x))), 0, 1, limit=200)[0]
     tg = np.linspace(0, 12, 2001); FQ_tab = np.array([FQ(t) for t in tg]); G_tab = np.array([G(t) for t in tg])
-    FQi = lambda t: np.interp(t, tg, FQ_tab)
+    FQi = lambda t: np.interp(t, tg, FQ_tab, right=1.0)
     b = np.array(levels); q = np.interp(b, FQ_tab, tg); Gt = np.interp(q, tg, G_tab); sigma2 = (1 - b)**2 * Gt + b**2 * (K2 - Gt)
     out = {"ntr": ntr, "m": m, "coef": coef.tolist(), "levels": levels, "sigma2_pred": sigma2.tolist(), "rmse_fit": float(np.sqrt(integrate.quad(lambda x: 4 * x**3 * a(x)**2, 0, 1)[0]))}
     Z = np.empty((reps, len(b)))
@@ -556,7 +575,7 @@ def E9(ntr=500, m=1000, reps=5000, reps_boot=2000, nboot=400, delta=0.1, levels=
         Fhat = (v[:, None] * ind).sum(0) / v.sum(); H = v[:, None] * (ind - Fhat[None, :]); sig = np.sqrt((H**2).mean(0)) / vbar
         xi = rng.normal(0, 1, (nboot, m)); Zb = (xi @ H) / (np.sqrt(m) * vbar); chat = np.quantile(Zb.max(1), 1 - delta)
         def fail(infl):
-            lev = np.minimum(b + infl, 1 - 1e-12); t2 = wquantile(S, v, lev); return bool(np.any(FQi(t2) < b))
+            t2 = wquantile(S, v, b + infl); return bool(np.any(FQi(t2) < b))     # +inf threshold where the level exceeds one
         fails["none"] += fail(0.0); fails["pointwise"] += fail(z1 * sig / np.sqrt(m)); fails["joint_boot"] += fail(chat / np.sqrt(m))
     out["joint_failure"] = {k: val / reps_boot for k, val in fails.items()}; out["reps_boot"] = reps_boot
     save("E9_learned.json", out); return out
@@ -578,10 +597,21 @@ def E10(ms=(500, 2000), reps=2000, nboot=400, delta=0.1, beta=0.8, seed=11, out_
     sh = Shift("D"); ths, tht = sh.theta_s, sh.theta_t          # (the tabulation does not use rng)
     q = sh.qQ(beta); Gt = float(np.interp(q, sh.tgrid, sh.G_tab)); sigma2 = (1 - beta)**2 * Gt + beta**2 * (sh.K2 - Gt)
     gam = integrate.quad(lambda x: sh.densQ(x) * np.log(x) * (2 * stats.norm.cdf(q / sh.sd(x)) - 1 - beta), 0, 1, limit=200)[0]
-    z1 = stats.norm.ppf(1 - delta); k_rank = int(np.ceil((1 - delta) * (nboot + 1)))
+    z1 = stats.norm.ppf(1 - delta)
     configs = [("oracle", None, None), ("indep", 1.0, 1.0), ("reuse", 4.0, None), ("reuse", 1.0, None), ("reuse", 0.25, None), ("reuse", 1 / 16, None)]
-    out = {"ms": list(ms), "reps": reps, "nboot": nboot, "delta": delta, "beta": beta, "sigma2": sigma2, "gamma": gam,
+    settings = {"reps": reps, "nboot": nboot, "delta": delta, "beta": beta, "seed": seed}
+    out = {"ms": list(ms), **settings, "sigma2": sigma2, "gamma": gam,
            "theta_s": ths, "theta_t": tht, "K2": sh.K2, "B": sh.B, "results": []}
+    # Rows of an existing file for sample sizes that are not rerun are kept, but only if that file was produced with
+    # the same settings; checked here, before any simulation.  (The stream of each sample size is seed*100000 + m.)
+    path = os.path.join(RES, out_name); keep = []; old_ms = []
+    if os.path.exists(path):
+        old = json.load(open(path)); keep = [r for r in old.get("results", []) if r["m"] not in ms]
+        old_settings = {k: old.get(k) for k in settings}
+        if keep and old_settings != settings:
+            raise ValueError(f"{out_name} holds results for m = {sorted(set(r['m'] for r in keep))} produced with {old_settings}; "
+                             f"this run uses {settings}. Rerun those sample sizes too, or choose another out_name.")
+        if keep: old_ms = old.get("ms", [])
     mle = lambda x: -len(x) / np.log(x).sum()
     mle_rows = lambda x: -x.shape[1] / np.log(x).sum(1)
     for m in ms:
@@ -611,8 +641,8 @@ def E10(ms=(500, 2000), reps=2000, nboot=400, delta=0.1, beta=0.8, seed=11, out_
                     vb = (th_tb / th_sb)[:, None] * Xb ** (th_tb - th_sb)[:, None]
                     Lam = np.sqrt(m) * ((vb * (Sb <= tau)).sum(1) / vb.sum(1) - Fc)
                 for kind, draws in (("naive", Zn), ("pairs", Lam)):
-                    c = np.sort(draws)[min(k_rank, nboot) - 1]; bv[kind][r] = draws.var(ddof=1)
-                    lev = min(beta + c / np.sqrt(m), 1 - 1e-12); fail[kind][r] = bool(sh.FQ(wquantile(S, vh, lev)[0]) < beta)
+                    c = rank_quantile(draws, delta); bv[kind][r] = draws.var(ddof=1)
+                    lev = beta + c / np.sqrt(m); fail[kind][r] = bool(sh.FQ(wquantile(S, vh, lev)[0]) < beta)   # +inf threshold if lev > 1
             rec = {"m": m, "source": src, "Nt": Nt, "Ns": Ns, "tau2_pred": float(tau2), "emp_var": float(Z.var(ddof=1)),
                    "emp_var_se": float(Z.var(ddof=1) * np.sqrt(2 / (reps - 1))), "emp_mean": float(Z.mean()),
                    "boot_var": {k: float(v.mean()) for k, v in bv.items()},
@@ -620,17 +650,22 @@ def E10(ms=(500, 2000), reps=2000, nboot=400, delta=0.1, beta=0.8, seed=11, out_
                    "failure_se": {k: float(np.sqrt(f.mean() * (1 - f.mean()) / reps)) for k, f in fail.items()},
                    "limit_failure_naive": float(1 - stats.norm.cdf(z1 * np.sqrt(sigma2 / tau2)))}
             out["results"].append(rec); print(json.dumps(rec))
-    path = os.path.join(RES, out_name)
-    if os.path.exists(path):                                           # merge with results for other sample sizes
-        old = json.load(open(path)); keep = [r for r in old.get("results", []) if r["m"] not in ms]
+    if keep:                                                           # merge with the rows kept for other sample sizes
         out["results"] = sorted(keep + out["results"], key=lambda r: r["m"])   # stable: configuration order kept
-        out["ms"] = sorted(set(old.get("ms", [])) | set(ms))
+        out["ms"] = sorted(set(old_ms) | set(ms))
     save(out_name, out); return out
 
 if __name__ == "__main__":
     t0 = time.time()
     import sys
-    names = sys.argv[1:] or ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E7b", "E8", "E9", "E10"]
-    for fn in [globals()[nm] for nm in names]:
-        t = time.time(); r = fn(); print(fn.__name__, f"done in {time.time()-t:.0f}s"); print(json.dumps(r, indent=1)[:3000])
+    # The runs behind the stored files in results/ (one file each; E1, E4 and E5 also write a figure).  With no
+    # argument all of them are executed.  Each seeds its own generator, so each can be run alone.
+    runs = {"E1": E1, "E2": E2, "E3": E3, "E4": E4, "E5": E5, "E6": E6, "E7": E7,
+            "E7m8000": lambda: E7(m=8000, reps=1500, cases=E7_CASES[:3], out_name="E7_estboot_m8000.json", seed=81),
+            "E7b": E7b, "E8": E8, "E9": E9, "E10": E10}
+    names = sys.argv[1:] or list(runs)
+    unknown = [nm for nm in names if nm not in runs]
+    if unknown: sys.exit(f"unknown run(s) {unknown}; available: {' '.join(runs)}")
+    for nm in names:
+        t = time.time(); r = runs[nm](); print(nm, f"done in {time.time()-t:.0f}s"); print(json.dumps(r, indent=1)[:3000])
     print("total", f"{time.time()-t0:.0f}s")
