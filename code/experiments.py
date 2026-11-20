@@ -3,9 +3,9 @@ Numerical illustrations for
   "Weighted conformal prediction under covariate shift: process limits, estimated weights and efficiency".
 
 Run:  python3 experiments.py              every run behind the stored files (writes ../results/*.json, ../figures/*.pdf)
-      python3 experiments.py E7 E7m8000   a subset; the runs are E1 ... E10, E7b and E7m8000 (see the end of the file)
+      python3 experiments.py E7 E7m8000   a subset; the runs are E1 ... E11, E7b and E7m8000 (see the end of the file)
 
-Model (all experiments).  Y = 2X + eps, eps | X ~ N(0, (0.2+|X|)^2); fixed predictor mu(x)=2x,
+Model (experiments E1-E10).  Y = 2X + eps, eps | X ~ N(0, (0.2+|X|)^2); fixed predictor mu(x)=2x,
 score S = |Y - mu(X)| = |eps|, so F_{S|X=x}(t) = 2 Phi(t/(0.2+|x|)) - 1.
 Shifts (likelihood ratio v = dQ_X/dP_X):
   A  bounded:     P_X = U(0,1), Q_X density 4x^3,            v(x) = 4x^3,            B = 4, K^2 = 16/7
@@ -13,6 +13,7 @@ Shifts (likelihood ratio v = dQ_X/dP_X):
   C  heavy tail:  P_X = U(0,1), v(x) = c x^{-1/p}, p=1.5,    P(v>t) = c^p t^{-p}: infinite chi-square
   D  bounded, parametric: P_X = Beta(3,1), Q_X = Beta(4,1), v(x) = 4x/3, B = 4/3, K^2 = 16/15, noise scale
      2 - 1.8x instead of 0.2 + |x| (experiment E10: estimated weights, main text)
+E11 uses real data instead (../data/airfoil_self_noise.dat): a finite-population design described in its docstring.
 Coverage.  F_Q and G are tabulated by numerical quadrature on a grid of thresholds and interpolated linearly, so the
 coverage F_Q(tau) of a threshold is computed numerically, without test-sample Monte Carlo error.
 Boundary conventions (as in the paper).  A weighted quantile at a level above one, or with all weights zero, is +inf
@@ -655,6 +656,162 @@ def E10(ms=(500, 2000), reps=2000, nboot=400, delta=0.1, beta=0.8, seed=11, out_
         out["ms"] = sorted(set(old_ms) | set(ms))
     save(out_name, out); return out
 
+# ----------------------------------------------------------------------------------------------
+# E11.  Airfoil benchmark: learned predictor, logistic-regression ratio, frozen-weight vs refitted bootstrap
+# ----------------------------------------------------------------------------------------------
+def load_airfoil():
+    """UCI Airfoil Self-Noise data (Brooks, Pope and Marcolini, 1989; CC BY 4.0), see ../data/README.md.
+    Columns: frequency, angle of attack, chord length, free-stream velocity, suction-side displacement thickness,
+    scaled sound pressure level.  Frequency and thickness are log-transformed, as in Tibshirani et al. (2019)."""
+    D = np.loadtxt(os.path.join(HERE, "..", "data", "airfoil_self_noise.dat"))
+    X = D[:, :5].copy(); X[:, 0] = np.log(X[:, 0]); X[:, 4] = np.log(X[:, 4])
+    return X, D[:, 5]
+
+def logit_fit(ns, nt, Xt, XX, eta0=None, tol=1e-10, maxit=100):
+    """Maximum likelihood for the logistic 'target versus source' model on a finite set of covariate points:
+    row j of Xt (intercept and covariates) was drawn ns[..., j] times in the source sample and nt[..., j] times in
+    the target sample.  ns, nt: arrays of shape (N,) or (R, N); R fits are run together by Newton's method.
+    XX holds the N outer products of the rows of Xt, flattened."""
+    ns = np.atleast_2d(ns).astype(float); nt = np.atleast_2d(nt).astype(float); n = ns + nt
+    R, d = ns.shape[0], Xt.shape[1]
+    eta = np.zeros((R, d)) if eta0 is None else np.broadcast_to(eta0, (R, d)).copy()
+    for _ in range(maxit):
+        p = 1.0 / (1.0 + np.exp(-(eta @ Xt.T)))
+        g = (nt - n * p) @ Xt
+        H = ((n * p * (1 - p)) @ XX).reshape(R, d, d)
+        step = np.linalg.solve(H, g[..., None])[..., 0]
+        eta += step
+        if np.abs(step).max() < tol: return eta
+    raise RuntimeError("logit_fit: Newton's method did not converge")
+
+def E11(ms=(500, 1000), nsplits=20, reps=250, nboot=400, delta=0.1, beta=0.9, tilt=0.5, ntrain=500, seed=12,
+        out_name="E11_airfoil.json"):
+    """Finite-population design on real data.  For each of `nsplits` random splits, the data are divided into a
+    training set (least-squares predictor) and a population of N points.  P is the uniform law on the population and
+    Q its exponential tilt, v(x) proportional to exp(tilt * (log thickness - log frequency)): the tilt of Tibshirani
+    et al. (2019) at strength `tilt`.  Calibration and covariate samples are drawn with replacement, so they are
+    i.i.d. from P and Q, every sample is a vector of counts on the population, and the coverage F_Q(tau) of a
+    threshold is computed exactly.  The ratio is estimated by logistic regression of target versus source covariates;
+    the source sample is either independent of the calibration sample or the calibration covariates themselves.
+    `reps` calibration samples are drawn per split and every configuration is run on each of them; failure
+    frequencies are pooled over the splits, and variances are reported relative to the variance with the true ratio,
+    asymptotic (sigma^2 of the split) or empirical on the same samples."""
+    X, y = load_airfoil(); n_all = len(y); N = n_all - ntrain; unif = np.full(N, 1.0 / N)
+    z1 = stats.norm.ppf(1 - delta)
+    configs = [("oracle", None, None), ("indep", 1.0, 1.0), ("reuse", 4.0, None), ("reuse", 1.0, None), ("reuse", 0.25, None)]
+    kinds = ("frozen", "refit")
+    out = {"ms": list(ms), "nsplits": nsplits, "reps": reps, "nboot": nboot, "delta": delta, "beta": beta, "tilt": tilt,
+           "ntrain": ntrain, "seed": seed, "N": N, "splits": [], "results": []}
+    pops = []
+    for sp in range(nsplits):                                              # the populations, one per split
+        perm = np.random.default_rng([seed, sp]).permutation(n_all); tr, pool = perm[:ntrain], perm[ntrain:]
+        Atr = np.c_[np.ones(ntrain), X[tr]]; coef = np.linalg.lstsq(Atr, y[tr], rcond=None)[0]
+        r2 = 1 - ((y[tr] - Atr @ coef)**2).sum() / ((y[tr] - y[tr].mean())**2).sum()
+        Xp = X[pool]; S = np.abs(y[pool] - np.c_[np.ones(N), Xp] @ coef)
+        o = np.argsort(S); S = S[o]; Xp = Xp[o]                           # population sorted by score
+        assert len(np.unique(S)) == N
+        Zc = (Xp - Xp.mean(0)) / Xp.std(0); Xt = np.c_[np.ones(N), Zc]; d = Xt.shape[1]
+        XX = (Xt[:, :, None] * Xt[:, None, :]).reshape(N, d * d)
+        w = np.exp(tilt * (Xp[:, 4] - Xp[:, 0])); v = w / w.mean(); qprob = v / N; K2 = float((v**2).mean())
+        FQ_cum = np.cumsum(qprob); FQ_cum[-1] = 1.0
+        kq = int(np.searchsorted(FQ_cum, beta)); Fq = float(FQ_cum[kq])   # population quantities at the level beta
+        ind_q = (np.arange(N) <= kq).astype(float); h = v * (ind_q - Fq)
+        sigma2 = float((h**2).mean()); Gt = float((v**2 * ind_q).mean())
+        gam = (v[:, None] * (Zc - (v[:, None] * Zc).mean(0)) * (ind_q - Fq)[:, None]).mean(0)   # coupling gradient
+        def tau2_pred(src, lam_t, lam_s, v=v, Xt=Xt, h=h, gam=gam, sigma2=sigma2):
+            """asymptotic variance of the coverage error for the logistic estimator (Corollary 'coverage with
+            estimated weights'), from the influence function of the two-sample logistic regression"""
+            if src == "oracle": return sigma2
+            Nt_m, Ns_m = 1.0 / lam_t, (1.0 / lam_s if src == "indep" else 1.0)   # sample sizes relative to m
+            p = Nt_m * v / (Ns_m + Nt_m * v)
+            A = Ns_m * (Xt.T * (p * (1 - p))) @ Xt / N + Nt_m * (Xt.T * (v * p * (1 - p))) @ Xt / N
+            Ai = np.linalg.inv(A)
+            gs = p[:, None] * Xt; gs = gs - gs.mean(0); gt = (1 - p)[:, None] * Xt; gt = gt - (v[:, None] * gt).mean(0)
+            VarP = gs.T @ gs / N; VarQ = (gt.T * v) @ gt / N
+            if src == "indep":
+                return float(sigma2 + gam @ (Ai @ (Ns_m * VarP + Nt_m * VarQ) @ Ai.T)[1:, 1:] @ gam)
+            psi = -(gs @ Ai.T)[:, 1:]; Saux = (Nt_m * Ai @ VarQ @ Ai.T)[1:, 1:]
+            return float(sigma2 + 2 * gam @ (h[:, None] * psi).mean(0) + gam @ (psi.T @ psi / N + Saux) @ gam)
+        kP = int(np.ceil(beta * N)) - 1                                   # unweighted population quantile
+        pops.append(dict(S=S, Zc=Zc, Xt=Xt, XX=XX, v=v, qprob=qprob, FQ_cum=FQ_cum, sigma2=sigma2,
+                         tau2={(c[0], c[1]): tau2_pred(*c) for c in configs}))
+        out["splits"].append({"K2": K2, "max_v": float(v.max()), "max_atom_Q": float(qprob.max()), "r2_train": float(r2),
+                              "q": float(S[kq]), "q_P": float(S[kP]), "FQ_at_q_P": float(FQ_cum[kP]), "sigma2": sigma2,
+                              "sigma2_eff": float(sigma2 - (Fq * K2 - Gt)**2 / (K2 - 1)), "gamma": gam.tolist()})
+    nc = len(configs); T = nsplits * reps
+    for m in ms:
+        # all configurations are run on the same calibration samples (and on nested target samples), so that the
+        # comparisons between configurations and between the two bootstraps are paired
+        Nts = sorted({int(round(m / c[1])) for c in configs if c[1]})    # target sample sizes, increasing
+        Zs = np.empty((nc, T)); cover0 = np.empty((nc, T)); len0 = np.empty((nc, T))
+        fail = {k: np.zeros((nc, T), bool) for k in kinds}; infl = {k: np.empty((nc, T)) for k in kinds}
+        cover = {k: np.empty((nc, T)) for k in kinds}; length = {k: np.empty((nc, T)) for k in kinds}
+        for sp, pop in enumerate(pops):
+            rg = np.random.default_rng([seed, m, sp])                    # one stream per sample size and split
+            S, Zc, Xt, XX, v, qprob, FQ_cum = (pop[k] for k in ("S", "Zc", "Xt", "XX", "v", "qprob", "FQ_cum"))
+            def FQ(t):                                                    # exact coverage of the threshold t
+                if not np.isfinite(t): return 1.0
+                k = np.searchsorted(S, t, side="right"); return float(FQ_cum[k - 1]) if k > 0 else 0.0
+            for r in range(sp * reps, (sp + 1) * reps):
+                c = rg.multinomial(m, unif).astype(float)                 # calibration sample as counts
+                ns_ind = rg.multinomial(m, unif)                          # independent source sample (N_s = m)
+                nt_by = {}; acc = np.zeros(N, dtype=np.int64); prev = 0   # nested target samples
+                for Nt in Nts:
+                    acc = acc + rg.multinomial(Nt - prev, qprob); nt_by[Nt] = acc; prev = Nt
+                for ci, (src, lam_t, lam_s) in enumerate(configs):
+                    if src == "oracle":
+                        vh = v
+                    else:
+                        Nt = int(round(m / lam_t)); nt = nt_by[Nt]; ns = c if src == "reuse" else ns_ind
+                        eta = logit_fit(ns, nt, Xt, XX)[0]; vh = np.exp(Zc @ eta[1:])
+                    wts = c * vh; tau = wquantile(S, wts, beta)[0]
+                    ind = (S <= tau).astype(float); Fc = (wts * ind).sum() / wts.sum()
+                    cover0[ci, r] = FQ(tau); len0[ci, r] = 2 * tau; Zs[ci, r] = np.sqrt(m) * (beta - cover0[ci, r])
+                    # frozen weights: multiplier bootstrap of Procedure 1 (c_j standard normal multipliers sum to N(0, c_j))
+                    xi = rg.normal(0, 1, (nboot, N)) * np.sqrt(c)
+                    draws = {"frozen": (xi @ (vh * (ind - Fc))) / (np.sqrt(m) * wts.sum() / m)}
+                    if src == "oracle":
+                        draws["refit"] = draws["frozen"]                  # nothing to refit
+                    else:                                                 # pairs bootstrap: resample and refit the ratio
+                        cb = rg.multinomial(m, c / m, size=nboot).astype(float)
+                        ntb = rg.multinomial(Nt, nt / Nt, size=nboot)
+                        nsb = cb if src == "reuse" else rg.multinomial(m, ns / m, size=nboot)
+                        vb = np.exp(logit_fit(nsb, ntb, Xt, XX, eta0=eta)[:, 1:] @ Zc.T) * cb
+                        draws["refit"] = np.sqrt(m) * ((vb * ind).sum(1) / vb.sum(1) - Fc)
+                    for kind in kinds:
+                        cq = rank_quantile(draws[kind], delta); infl[kind][ci, r] = cq / np.sqrt(m)
+                        t2 = wquantile(S, wts, beta + cq / np.sqrt(m))[0]   # +inf (whole space) if the level exceeds one
+                        cover[kind][ci, r] = FQ(t2); fail[kind][ci, r] = cover[kind][ci, r] < beta
+                        length[kind][ci, r] = 2 * t2 if np.isfinite(t2) else np.nan
+        sig2 = np.array([pop["sigma2"] for pop in pops])
+        var_split = Zs.reshape(nc, nsplits, reps).var(axis=2, ddof=1)     # empirical variances, per configuration and split
+        for ci, (src, lam_t, lam_s) in enumerate(configs):
+            Nt = int(round(m / lam_t)) if lam_t else None; Ns = int(round(m / lam_s)) if lam_s else None
+            t2p = np.array([pop["tau2"][(src, lam_t)] for pop in pops])
+            ratio = var_split[ci] / sig2                                  # over the asymptotic variance with the true ratio
+            paired = var_split[ci] / var_split[0]                         # over the empirical variance with the true ratio, same samples
+            dfail = fail["frozen"][ci].astype(float) - fail["refit"][ci]
+            rec = {"m": m, "source": src, "Nt": Nt, "Ns": Ns,
+                   "tau2_ratio_pred": float((t2p / sig2).mean()), "emp_var_ratio": float(ratio.mean()),
+                   "emp_var_ratio_se": float(ratio.std(ddof=1) / np.sqrt(nsplits)),
+                   "emp_var_ratio_paired": float(paired.mean()),
+                   "emp_var_ratio_paired_se": float(paired.std(ddof=1) / np.sqrt(nsplits)),
+                   "limit_failure_frozen": float((1 - stats.norm.cdf(z1 * np.sqrt(sig2 / t2p))).mean()),
+                   "coverage_uninflated": float(cover0[ci].mean()), "failure_uninflated": float((cover0[ci] < beta).mean()),
+                   "length_uninflated": float(len0[ci].mean()),
+                   "failure": {k: float(f[ci].mean()) for k, f in fail.items()},
+                   "failure_se": {k: float(np.sqrt(f[ci].mean() * (1 - f[ci].mean()) / T)) for k, f in fail.items()},
+                   "failure_diff": float(dfail.mean()), "failure_diff_se": float(dfail.std(ddof=1) / np.sqrt(T)),
+                   "inflation": {k: float(x[ci].mean()) for k, x in infl.items()},
+                   "coverage": {k: float(x[ci].mean()) for k, x in cover.items()},
+                   "length": {k: float(np.nanmean(x[ci])) for k, x in length.items()},
+                   "length_diff": float(np.nanmean(length["frozen"][ci] - length["refit"][ci])),
+                   "length_diff_se": float(np.nanstd(length["frozen"][ci] - length["refit"][ci], ddof=1) / np.sqrt(T)),
+                   "whole_space": {k: int(np.isnan(x[ci]).sum()) for k, x in length.items()},
+                   "tau2_ratio_pred_by_split": (t2p / sig2).tolist(), "emp_var_ratio_by_split": ratio.tolist()}
+            out["results"].append(rec); print(json.dumps({k: v_ for k, v_ in rec.items() if not k.endswith("by_split")}), flush=True)
+    save(out_name, out); return out
+
 if __name__ == "__main__":
     t0 = time.time()
     import sys
@@ -662,7 +819,7 @@ if __name__ == "__main__":
     # argument all of them are executed.  Each seeds its own generator, so each can be run alone.
     runs = {"E1": E1, "E2": E2, "E3": E3, "E4": E4, "E5": E5, "E6": E6, "E7": E7,
             "E7m8000": lambda: E7(m=8000, reps=1500, cases=E7_CASES[:3], out_name="E7_estboot_m8000.json", seed=81),
-            "E7b": E7b, "E8": E8, "E9": E9, "E10": E10}
+            "E7b": E7b, "E8": E8, "E9": E9, "E10": E10, "E11": E11}
     names = sys.argv[1:] or list(runs)
     unknown = [nm for nm in names if nm not in runs]
     if unknown: sys.exit(f"unknown run(s) {unknown}; available: {' '.join(runs)}")

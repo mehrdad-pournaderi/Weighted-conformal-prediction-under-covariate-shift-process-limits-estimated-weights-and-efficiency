@@ -2,19 +2,21 @@
 
 Mehrdad Pournaderi (Mofid Securities)
 
-Simulation code and stored results for the numerical experiments of the paper. The paper itself is not part of
-this repository.
+Simulation code, data and stored results for the numerical experiments of the paper. The paper itself is not
+part of this repository.
 
 The experiments study weighted split conformal prediction under covariate shift: the calibration scores are
 reweighted with the likelihood ratio `v = dQ_X/dP_X` of the target and source covariate distributions, and the
 quantity of interest is the training-conditional coverage of the resulting prediction set, with known and
 with estimated weights. The simulation design (regression model, score, and the four covariate shifts A-D) is
-described in the header of [`code/experiments.py`](code/experiments.py).
+described in the header of [`code/experiments.py`](code/experiments.py); the benchmark on the airfoil data
+(run E11) is described in the docstring of `E11` there.
 
 ## Layout
 
 ```
 code/experiments.py     all experiments; the table of runs is at the end of the file
+data/                   the airfoil data used by run E11, with its source and license
 results/                stored output of every run (JSON)
 requirements.txt        Python dependencies
 ```
@@ -47,9 +49,11 @@ Each run writes one JSON file to `results/`, replacing the stored one. E1, E4 an
 | E8 | two shifts with the same second moment of the weights | `E8_coupling.json` | Table 9 | 1 min |
 | E9 | learned predictor | `E9_learned.json` | Section 9 (text) | 1 min |
 | E10 | estimated weights in a bounded parametric model | `E10_estweights_bounded.json` | Table 6 | 15 min |
+| E11 | airfoil benchmark: fitted predictor, logistic-regression ratio, naive and pairs bootstrap | `E11_airfoil.json` | focused version, Table 3 | 55 min |
 
-Table and figure numbers refer to the full version of the paper; its journal supplement uses the same numbers
-with the prefix S. Runtimes are approximate, on one core.
+Table and figure numbers refer to the extended version of the paper. The focused version uses E10 (its
+Table 2), E11 (Table 3), E2 and E8 (text of its Section 7.3) and E6 (Table 4). Runtimes are approximate, on
+one core.
 
 ## Reproducing the stored results
 
@@ -58,7 +62,7 @@ experiment are the ones used for the paper, and `E7m8000` is the one run with ot
 (`E7(m=8000, reps=1500, cases=E7_CASES[:3], out_name="E7_estboot_m8000.json", seed=81)`). Each run seeds its
 own random generator, so it can be started alone.
 
-The files in `results/` are the output of this code as it stands: all twelve runs were executed with it
+The files in `results/` are the output of this code as it stands: all thirteen runs were executed with it
 (Python 3.13, NumPy 2.5.3, SciPy 1.18.1, single-threaded OpenBLAS, Linux x86-64), and a rerun on that setup
 gives the same files byte for byte.
 
@@ -75,16 +79,27 @@ What exact reproduction depends on:
   in the file; otherwise the run stops before simulating.
 - **E3 and E6** use common random numbers across the variants they compare, so that paired differences are
   precise.
+- **E11.** Each sample size and each training split has its own stream (`[seed, m, split]`), so
+  `E11(ms=(500,))` and `E11(ms=(1000,))` reproduce their rows separately; the stored file was produced that
+  way, one sample size at a time, and a second run gave the same file. Within a stream all configurations
+  are run on the same calibration samples, in the order of the stored rows.
 
 ## Conventions
 
 - **Coverage is computed numerically.** The target score distribution `F_Q` and the clock `G` are tabulated
   by numerical quadrature on a grid of thresholds and interpolated linearly. The coverage `F_Q(tau)` of a
-  threshold therefore carries quadrature and interpolation error, but no test-sample Monte Carlo error.
+  threshold therefore carries quadrature and interpolation error, but no test-sample Monte Carlo error. In
+  E11 the population is finite and `F_Q(tau)` is an exact finite sum.
 - **Boundary cases follow the paper.** The weighted quantile is `+inf` at a level above one and when all
   weights are zero, so the prediction set is the whole space. The rank-corrected bootstrap critical value of
   Procedure 1, the `k`-th smallest of `R` draws with `k = ceil((1 - delta)(R + 1))`, is `+inf` when `k > R`.
   Applying these conventions left every stored result unchanged.
+
+## Data
+
+`data/airfoil_self_noise.dat` is the Airfoil Self-Noise data set of the UCI Machine Learning Repository
+(Brooks, Pope and Marcolini, 1989, <https://doi.org/10.24432/C5VW2C>), unmodified and distributed under the
+Creative Commons Attribution 4.0 International license; see [`data/README.md`](data/README.md).
 
 ## Citation
 
