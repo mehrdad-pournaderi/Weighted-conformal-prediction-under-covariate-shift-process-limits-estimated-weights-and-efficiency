@@ -171,7 +171,7 @@ def E2(m=2000, delta=0.1, reps=1500, nboot=400):
             # multiplier bootstrap of the one-sided sup of the coverage process
             xi = rng.normal(0, 1, (nboot, m))
             Zb = (xi @ H) / (np.sqrt(m) * vbar)                                    # nboot x L
-            chat = np.quantile(Zb.max(1), 1 - delta)
+            chat = rank_quantile(Zb.max(1), delta)                                 # critical value of Procedure 1
             def fail(infl):   # any level under-covers?  P_e(tau(beta+infl)) > 1-beta  <=>  F_Q(tau(beta+infl)) < beta
                 t2 = wquantile(S, v, levels + infl)                                # +inf where the level exceeds one
                 return bool(np.any(sh.FQ(t2) < levels))

@@ -18,19 +18,19 @@
    "none": 0.7406666666666667,
    "pointwise": 0.22333333333333333,
    "bonferroni": 0.06133333333333333,
-   "joint_boot": 0.11
+   "joint_boot": 0.10866666666666666
   },
   "interval": {
    "none": 0.8173333333333334,
    "pointwise": 0.31466666666666665,
-   "joint_boot": 0.10733333333333334
+   "joint_boot": 0.106
   }
  },
  "mean_inflation": {
   "pointwise": 0.014882078434801625,
   "bonferroni": 0.022760174878266568,
-  "joint_boot_fin": 0.020824466784971345,
+  "joint_boot_fin": 0.020984588594316633,
   "pointwise_int": 0.015118051226832512,
-  "joint_boot_int": 0.023813488487917932
+  "joint_boot_int": 0.02397042309517966
  }
 }
