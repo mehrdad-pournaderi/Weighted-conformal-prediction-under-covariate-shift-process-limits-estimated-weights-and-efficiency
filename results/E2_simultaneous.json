@@ -27,10 +27,11 @@
   }
  },
  "mean_inflation": {
-  "pointwise": 0.014882078434801625,
-  "bonferroni": 0.022760174878266568,
+  "pointwise": 0.014880258772483066,
+  "bonferroni": 0.02275739194490338,
   "joint_boot_fin": 0.020984588594316633,
-  "pointwise_int": 0.015118051226832512,
+  "pointwise_int": 0.015116197780330036,
+  "bonferroni_int": 0.03468180710307373,
   "joint_boot_int": 0.02397042309517966
  }
 }

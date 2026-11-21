@@ -159,7 +159,8 @@ def E2(m=2000, delta=0.1, reps=1500, nboot=400):
     z1 = stats.norm.ppf(1 - delta); zbonf = stats.norm.ppf(1 - delta / len(levels_fin))
     rec = {"finite": {k: [] for k in ["none", "pointwise", "bonferroni", "joint_boot"]},
            "interval": {k: [] for k in ["none", "pointwise", "joint_boot"]},
-           "inflation": {"pointwise": [], "bonferroni": [], "joint_boot_fin": [], "pointwise_int": [], "joint_boot_int": []}}
+           "inflation": {"pointwise": [], "bonferroni": [], "joint_boot_fin": [],
+                         "pointwise_int": [], "bonferroni_int": [], "joint_boot_int": []}}
     for r in range(reps):
         X, S, v = sh.sample_cal(m); vbar = v.mean()
         for name, levels in [("finite", levels_fin), ("interval", levels_int)]:
@@ -167,7 +168,7 @@ def E2(m=2000, delta=0.1, reps=1500, nboot=400):
             ind = (S[:, None] <= tau[None, :]).astype(float)                      # m x L
             Fhat = (v[:, None] * ind).sum(0) / v.sum()
             H = v[:, None] * (ind - Fhat[None, :])                                 # m x L, centered at Fhat
-            sig = np.sqrt((H**2).mean(0)) / vbar                                   # plug-in sd of Z_m(tau(beta))
+            sig = np.sqrt(((v[:, None] * (ind - levels[None, :]))**2).mean(0)) / vbar   # plug-in sd, centered at beta
             # multiplier bootstrap of the one-sided sup of the coverage process
             xi = rng.normal(0, 1, (nboot, m))
             Zb = (xi @ H) / (np.sqrt(m) * vbar)                                    # nboot x L
@@ -185,6 +186,8 @@ def E2(m=2000, delta=0.1, reps=1500, nboot=400):
                 rec["inflation"]["joint_boot_fin"].append(float(chat / np.sqrt(m)))
             else:
                 rec["inflation"]["pointwise_int"].append(float(np.mean(z1 * sig / np.sqrt(m))))
+                zb_int = stats.norm.ppf(1 - delta / len(levels_int))               # Bonferroni over the grid (not run)
+                rec["inflation"]["bonferroni_int"].append(float(np.mean(zb_int * sig / np.sqrt(m))))
                 rec["inflation"]["joint_boot_int"].append(float(chat / np.sqrt(m)))
     out = {"m": m, "delta": delta, "reps": reps, "nboot": nboot,
            "levels_finite": levels_fin.tolist(), "interval": [0.80, 0.95],
